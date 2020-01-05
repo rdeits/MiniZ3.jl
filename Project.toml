@@ -1,0 +1,7 @@
+name = "Z3"
+uuid = "e25d158d-770d-41a2-bcab-8455a1101635"
+authors = ["Robin Deits <robin.deits@gmail.com>"]
+version = "0.1.0"
+
+[deps]
+z3_jll = "1bc4e1ec-7839-5212-8f2f-0d16b7bd09bc"
