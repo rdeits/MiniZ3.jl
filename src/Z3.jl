@@ -1,5 +1,19 @@
 module Z3
 
+export Config,
+    set_param!,
+    Context,
+    Solver,
+    Model,
+    Variable,
+    Constant,
+    constraint!,
+    check,
+    model,
+    and,
+    or,
+    distinct
+
 using z3_jll
 include("cz3.jl")
 
@@ -7,7 +21,7 @@ macro z3_finalizer(obj, function_name::Symbol)
     quote
         finalizer($(esc(obj))) do x
             ccall(($(QuoteNode(function_name)), libz3), Cvoid, (Ptr{Cvoid},), x)
-            x.pointer = Cvoid
+            x.pointer = C_NULL
         end
     end
 end
@@ -27,7 +41,7 @@ function set_param!(c::Config, param::AbstractString, value::AbstractString)
 end
 
 function handle_error(ctx::cz3.context, error::cz3.error_code)
-    printf("Z3 internal error: $error")
+    println("Z3 internal error: $error")
 end
 
 mutable struct Context
@@ -104,6 +118,10 @@ struct Sort{T} <: AST
         new(ASTRefCount(ctx, ccall((:Z3_mk_bool_sort, libz3),
             cz3.ast, (cz3.context,), ctx)))
     end
+
+    function Sort{Integer}(ctx::Context)
+        new(ASTRefCount(ctx, ccall((:Z3_mk_int_sort, libz3), cz3.ast, (cz3.context,), ctx)))
+    end
 end
 ast(s::Sort) = s.ast
 
@@ -117,6 +135,8 @@ struct Variable{T} <: Value{T}
         sym = ccall((:Z3_mk_string_symbol, libz3), cz3.symbol, (cz3.context, cz3.string), ctx, name)
         new(ASTRefCount(ctx, ccall((:Z3_mk_const, libz3), cz3.ast, (cz3.context, cz3.symbol, cz3.sort), ctx, sym, sort)))
     end
+
+    Variable{T}(ast::ASTRefCount) where {T} = new{T}(ast)
 end
 ast(v::Variable) = v.ast
 
@@ -129,10 +149,23 @@ struct Expr{T} <: Value{T}
 end
 ast(e::Expr) = e.ast
 
-function Base.xor(b1::Value{Bool}, b2::Value{Bool})
-    @assert context(b1) === context(b2)
-    Expr{Bool}(context(b1), ccall((:Z3_mk_xor, libz3), cz3.ast, (cz3.context, cz3.ast, cz3.ast), context(b1), b1, b2))
+struct Constant{T} <: Value{T}
+    ast::ASTRefCount
+
+    function Constant{T}(ctx::Context, pointer::cz3.ast) where {T}
+        new(ASTRefCount(ctx, pointer))
+    end
+
+    function Constant{Integer}(ctx::Context, value::Integer)
+        sort = Sort{Integer}(ctx)
+        new(ASTRefCount(ctx, ccall((:Z3_mk_int, libz3), cz3.ast, (cz3.context, Cint, cz3.sort), ctx, value, sort)))
+    end
 end
+ast(c::Constant) = c.ast
+
+Base.cconvert(::Type{Ptr{cz3.ast}}, a::NTuple{N, cz3.ast}) where {T, N} = Base.RefValue(a)
+Base.unsafe_convert(::Type{Ptr{cz3.ast}}, a::Base.RefValue{NTuple{N, cz3.ast}}) where {N} = Ptr{cz3.ast}(Base.unsafe_convert(Ptr{NTuple{N, cz3.ast}}, a))
+
 
 function constraint!(solver::Solver, condition::Value{Bool})
     ccall((:Z3_solver_assert, libz3), Cvoid, (cz3.context, cz3.solver, cz3.ast), context(solver), solver, condition)
@@ -157,5 +190,78 @@ function model(solver::Solver)
         error("No model available.")
     end
 end
+
+function evaluate(model::Model, val::Value{T}, model_completion::Bool = true) where {T}
+    result = Ref{cz3.ast}()
+    @assert ccall((:Z3_model_eval, libz3), Bool, (cz3.context, cz3.model, cz3.ast, Bool, Ref{cz3.ast}), context(val), model, val, model_completion, result)
+    Expr{T}(context(val), result[])
+end
+
+function Base.Int(model::Model, val::Value{Integer})
+    expr = evaluate(model, val, true)
+    result = Ref{Cint}()
+    @assert ccall((:Z3_get_numeral_int, libz3), Bool, (cz3.context, cz3.ast, Ref{Cint}), context(val), expr, result)
+    result[]
+end
+
+struct FunctionDeclaration{T} <: AST
+    ast::ASTRefCount
+end
+ast(func::FunctionDeclaration) = func.ast
+
+function (func::FunctionDeclaration{T})(args::Value...) where {T}
+    ctx = context(func)
+    for arg in args
+        @assert context(arg) == ctx
+    end
+    pointers = Base.unsafe_convert.(cz3.ast, args)
+    Expr{T}(ctx,
+        ccall((:Z3_mk_app, libz3),
+              cz3.ast,
+              (cz3.context, cz3.func_decl, Cuint, Ptr{cz3.ast}),
+              ctx, func, length(args), pointers))
+end
+
+function constant_declaration(model::Model, index::Integer)
+    FunctionDeclaration{Any}(ASTRefCount(context(model),
+        ccall((:Z3_model_get_const_decl, libz3),
+            cz3.func_decl,
+            (cz3.context, cz3.model, Cuint),
+            context(model), model, index - 1)))
+end
+
+function constant_interpretation(model::Model, declaration::FunctionDeclaration)
+    ast = ccall((:Z3_model_get_const_interp, libz3),
+            cz3.ast,
+            (cz3.context, cz3.model, cz3.func_decl),
+            context(model), model, declaration)
+    Expr{Any}(context(model), ast)
+end
+
+function num_constants(model::Model)
+    Int(ccall((:Z3_model_get_num_consts, libz3), Cuint, (cz3.context, cz3.model), context(model), model))
+end
+
+function exclude_current_interpretation!(solver, model::Model)
+    ctx = context(solver)
+    assignments = map(1:num_constants(model)) do i
+        declaration = constant_declaration(model, i)
+        interpretation = constant_interpretation(model, declaration)
+
+        declaration() == interpretation
+    end
+    constraint!(solver, !(and(assignments...)))
+end
+
+function kind(ast::AST)
+    sort_ptr = ccall((:Z3_get_sort, libz3), cz3.sort,
+        (cz3.context, cz3.ast),
+        context(ast), ast)
+    ccall((:Z3_get_sort_kind, libz3), cz3.sort_kind,
+        (cz3.context, cz3.sort),
+        context(ast), sort_ptr)
+end
+
+include("relations.jl")
 
 end # module

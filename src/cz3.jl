@@ -23,11 +23,30 @@ const string = Cstring
       Z3_L_UNDEF = 0,
       Z3_L_TRUE = 1)
 
+@enum(sort_kind,
+     Z3_UNINTERPRETED_SORT,
+     Z3_BOOL_SORT,
+     Z3_INT_SORT,
+     Z3_REAL_SORT,
+     Z3_BV_SORT,
+     Z3_ARRAY_SORT,
+     Z3_DATATYPE_SORT,
+     Z3_RELATION_SORT,
+     Z3_FINITE_DOMAIN_SORT,
+     Z3_FLOATING_POINT_SORT,
+     Z3_ROUNDING_MODE_SORT,
+     Z3_SEQ_SORT,
+     Z3_RE_SORT,
+     Z3_UNKNOWN_SORT = 1000)
+
+
 const context = Ptr{Cvoid}
 const ast = Ptr{Cvoid}
 const sort = Ptr{Cvoid}
 const symbol = Ptr{Cvoid}
 const solver = Ptr{Cvoid}
 const model = Ptr{Cvoid}
+const func_decl = Ptr{Cvoid}
+const sort = Ptr{Cvoid}
 
 end
