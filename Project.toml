@@ -1,7 +1,17 @@
-name = "Z3"
+name = "MiniZ3"
 uuid = "e25d158d-770d-41a2-bcab-8455a1101635"
 authors = ["Robin Deits <robin.deits@gmail.com>"]
 version = "0.1.0"
 
 [deps]
 z3_jll = "1bc4e1ec-7839-5212-8f2f-0d16b7bd09bc"
+
+[compat]
+julia = "1"
+z3_jll = "4.8"
+
+[extras]
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test"]

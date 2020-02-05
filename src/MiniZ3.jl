@@ -12,7 +12,9 @@ export Config,
     model,
     and,
     or,
-    distinct
+    distinct,
+    each_solution,
+    num_solutions
 
 using z3_jll
 include("cz3.jl")
