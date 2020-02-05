@@ -19,6 +19,11 @@ export Config,
 using z3_jll
 include("cz3.jl")
 
+abstract type AST <: Number end
+Base.unsafe_convert(::Type{cz3.ast}, a::AST) = Base.unsafe_convert(cz3.ast, ast(a))
+context(a::AST) = context(ast(a))
+
+
 macro z3_finalizer(obj, function_name::Symbol)
     quote
         finalizer($(esc(obj))) do x
@@ -60,9 +65,13 @@ Base.unsafe_convert(::Type{cz3.context}, ctx::Context) = ctx.pointer
 mutable struct Solver
     context::Context
     pointer::cz3.solver
+    scopes::Vector{Vector{AST}}
 
     function Solver(ctx::Context)
-        obj = new(ctx, ccall((:Z3_mk_solver, libz3), cz3.solver, (cz3.context,), ctx))
+        obj = new(ctx,
+            ccall((:Z3_mk_solver, libz3),
+                cz3.solver, (cz3.context,), ctx),
+            [[]])
         ccall((:Z3_solver_inc_ref, libz3), Cvoid, (cz3.context, cz3.solver), ctx, obj)
         finalizer(obj) do obj
             ccall((:Z3_solver_dec_ref, libz3), Cvoid, (cz3.context, cz3.solver), ctx, obj)
@@ -94,10 +103,6 @@ function Base.show(io::IO, model::Model)
     print(io, "]")
 end
 
-abstract type AST end
-Base.unsafe_convert(::Type{cz3.ast}, a::AST) = Base.unsafe_convert(cz3.ast, ast(a))
-context(a::AST) = context(ast(a))
-
 mutable struct ASTRefCount
     context::Context
     pointer::cz3.ast
@@ -113,7 +118,7 @@ end
 Base.unsafe_convert(::Type{cz3.ast}, ast::ASTRefCount) = ast.pointer
 context(a::ASTRefCount) = a.context
 
-struct Sort{T} <: AST
+struct Sort{T}
     ast::ASTRefCount
 
     function Sort{Bool}(ctx::Context)
@@ -126,6 +131,8 @@ struct Sort{T} <: AST
     end
 end
 ast(s::Sort) = s.ast
+Base.unsafe_convert(::Type{cz3.ast}, s::Sort) = Base.unsafe_convert(cz3.ast, ast(s))
+context(s::Sort) = context(ast(s))
 
 abstract type Value{T} <: AST end
 
@@ -170,6 +177,7 @@ Base.unsafe_convert(::Type{Ptr{cz3.ast}}, a::Base.RefValue{NTuple{N, cz3.ast}}) 
 
 
 function constraint!(solver::Solver, condition::Value{Bool})
+    push!(solver.scopes[end], condition)
     ccall((:Z3_solver_assert, libz3), Cvoid, (cz3.context, cz3.solver, cz3.ast), context(solver), solver, condition)
 end
 
@@ -265,6 +273,7 @@ function kind(ast::AST)
 end
 
 function push_scope!(solver::Solver)
+    push!(solver.scopes, Vector{AST}())
     ccall((:Z3_solver_push, libz3), Cvoid,
           (cz3.context, cz3.solver),
           context(solver), solver)
@@ -273,9 +282,13 @@ end
 pop_scope!(solver::Solver) = pop_scopes!(solver, 1)
 
 function pop_scopes!(solver::Solver, num_scopes::Integer=1)
+    @assert num_scopes <= length(solver.scopes) - 1
     ccall((:Z3_solver_pop, libz3), Cvoid,
           (cz3.context, cz3.solver, Cuint),
           context(solver), solver, num_scopes)
+    for i in 1:num_scopes
+        pop!(solver.scopes)
+    end
 end
 
 function each_solution(func, solver::Solver)
@@ -298,21 +311,6 @@ function num_solutions(solver::Solver)
     end
     count[]
 end
-
-# function all_solutions(func, solver::Solver)
-#     push_scope!(solver)
-#     try
-#         func(Channel{Model}() do ch
-#             while check(solver)
-#                 m = model(solver)
-#                 put!(ch, m)
-#                 exclude_current_interpretation!(solver, m)
-#             end
-#         end)
-#     finally
-#         pop_scope!(solver)
-#     end
-# end
 
 include("relations.jl")
 
