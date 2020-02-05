@@ -1,4 +1,4 @@
-module Z3
+module MiniZ3
 
 export Config,
     set_param!,
@@ -261,6 +261,56 @@ function kind(ast::AST)
         (cz3.context, cz3.sort),
         context(ast), sort_ptr)
 end
+
+function push_scope!(solver::Solver)
+    ccall((:Z3_solver_push, libz3), Cvoid,
+          (cz3.context, cz3.solver),
+          context(solver), solver)
+end
+
+pop_scope!(solver::Solver) = pop_scopes!(solver, 1)
+
+function pop_scopes!(solver::Solver, num_scopes::Integer=1)
+    ccall((:Z3_solver_pop, libz3), Cvoid,
+          (cz3.context, cz3.solver, Cuint),
+          context(solver), solver, num_scopes)
+end
+
+function each_solution(func, solver::Solver)
+    push_scope!(solver)
+    try
+        while check(solver)
+            m = model(solver)
+            func(m)
+            exclude_current_interpretation!(solver, m)
+        end
+    finally
+        pop_scope!(solver)
+    end
+end
+
+function num_solutions(solver::Solver)
+    count = Ref(0)
+    each_solution(solver) do model
+        count[] += 1
+    end
+    count[]
+end
+
+# function all_solutions(func, solver::Solver)
+#     push_scope!(solver)
+#     try
+#         func(Channel{Model}() do ch
+#             while check(solver)
+#                 m = model(solver)
+#                 put!(ch, m)
+#                 exclude_current_interpretation!(solver, m)
+#             end
+#         end)
+#     finally
+#         pop_scope!(solver)
+#     end
+# end
 
 include("relations.jl")
 

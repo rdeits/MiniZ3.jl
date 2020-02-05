@@ -1,5 +1,5 @@
 using Test
-using Z3
+using MiniZ3
 
 @testset "Easy sudoku" begin
     cfg = Config()
